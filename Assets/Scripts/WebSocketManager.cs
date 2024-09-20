@@ -58,6 +58,11 @@ public class WebSocketManager : MonoBehaviour
         _socket.ConnectAsync();
     }
 
+    public void Disconnect()
+    {
+        _socket.CloseAsync();
+    }
+
 
     private void OnSocketConnected(object sender, EventArgs e)
     {

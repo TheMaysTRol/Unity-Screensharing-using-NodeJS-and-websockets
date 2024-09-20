@@ -6,6 +6,7 @@ using System.Collections;
 using System;
 using System.Collections.Generic;
 using UnityEngine.Events;
+using TMPro;
 
 public class RTCManager : MonoBehaviour
 {
@@ -15,6 +16,12 @@ public class RTCManager : MonoBehaviour
     private Button joinBtn;
     [SerializeField]
     private Button hostBtn;
+
+    [SerializeField]
+    private Button quitBtn;
+
+    [SerializeField]
+    private TMP_InputField broadcastIdInput;
 
     [SerializeField]
     private bool shareForHostAlso = false;
@@ -63,18 +70,22 @@ public class RTCManager : MonoBehaviour
     public void Awake()
     {
         sourceImage.gameObject.SetActive(false);
+        quitBtn.gameObject.SetActive(false);
     }
 
     public void DisableButtons()
     {
         joinBtn.gameObject.SetActive(false);
         hostBtn.gameObject.SetActive(false);
+        broadcastIdInput.gameObject.SetActive(false);
+        quitBtn.gameObject.SetActive(true);
     }
 
     public void Start()
     {
         joinBtn.onClick.AddListener(OnClickJoin);
         hostBtn.onClick.AddListener(OnClickHost);
+        quitBtn.onClick.AddListener(OnClickQuit); // Add this line
         WebSocketManager.instance.On("GetId", OnReceiveId);
         WebSocketManager.instance.On("RequestOffer", OnRequestOffer);
         status = "Status: Ready to Host or Join";
@@ -90,6 +101,13 @@ public class RTCManager : MonoBehaviour
 
     public void OnClickJoin()
     {
+        isHosting = false;
+        string broadcastId = broadcastIdInput.text; // Get the user-defined broadcast ID
+        if (string.IsNullOrEmpty(broadcastId))
+        {
+            Debug.LogError("[RTCManager] Broadcast ID cannot be empty.");
+            return;
+        }
         DisableButtons();
         status = "Status: Joining...";
         onStatusChange.Invoke(status);
@@ -101,17 +119,53 @@ public class RTCManager : MonoBehaviour
                 status = "Status: Socket connected!";
                 onStatusChange.Invoke(status);
                 InitializePeerConnection();
-                WebSocketManager.instance.SendSocketMessage("Join_Broadcast", new { });
-                Debug.Log("[RTCManager] Joining Broadcast");
+
+                // Send broadcastId along with the join request
+                WebSocketManager.instance.SendSocketMessage("Join_Broadcast", new { broadcastId = broadcastId });
+                Debug.Log($"[RTCManager] Joining Broadcast with ID: {broadcastId}");
             });
         });
+    }
 
+    public void OnClickQuit()
+    {
+        // Notify server to quit the broadcast
+        Debug.Log("[RTCManager] Quitting Broadcast");
+
+        // Clean up resources
+        if (connection != null)
+        {
+            connection.Close();
+            connection = null;
+        }
+        if (WebSocketManager.instance.isSocketConnected)
+        {
+            WebSocketManager.instance.Disconnect();
+        }
+
+        // Reset UI and enable other buttons if needed
+        ResetUI();
+    }
+
+    private void ResetUI()
+    {
+        hostBtn.gameObject.SetActive(true);
+        joinBtn.gameObject.SetActive(true);
+        quitBtn.gameObject.SetActive(false);
+        broadcastIdInput.text = "";
+        broadcastIdInput.gameObject.SetActive(true);
     }
 
     public void OnClickHost()
     {
         try
         {
+            string broadcastId = broadcastIdInput.text;
+            if (string.IsNullOrEmpty(broadcastId))
+            {
+                Debug.LogError("[RTCManager] Broadcast ID cannot be empty.");
+                return;
+            }
             isHosting = true;
             DisableButtons();
             status = "Status: Hosting...";
@@ -125,8 +179,10 @@ public class RTCManager : MonoBehaviour
                         status = "Status: Socket connected!";
                         onStatusChange.Invoke(status);
                         InitializePeerConnection();
-                        WebSocketManager.instance.SendSocketMessage("Start_Broadcast", new { });
-                        Debug.Log("[RTCManager] Starting Broadcast");
+
+                        // Send broadcastId with the start request
+                        WebSocketManager.instance.SendSocketMessage("Start_Broadcast", new { broadcastId = broadcastId });
+                        Debug.Log($"[RTCManager] Starting Broadcast with ID: {broadcastId}");
 
                         videoStreamTrack = cameraStream.CaptureStreamTrack(1280, 720);
                         if (videoStreamTrack == null)
@@ -142,14 +198,7 @@ public class RTCManager : MonoBehaviour
                         else
                         {
                             Debug.Log("[RTCManager] Video Track added to WebRTC connection successfully.");
-
-                            // Verify that the video track is being transmitted
-                            videoStreamTrack.OnVideoReceived += tex =>
-                            {
-                                Debug.Log("[RTCManager] Host is transmitting video frames.");
-                            };
                         }
-                        Debug.Log($"[RTCManager] Video Track Added: {videoStreamTrack != null}, Camera Texture Size: {cameraStream.targetTexture.width}x{cameraStream.targetTexture.height}");
                     });
                 }
                 catch (Exception e)
@@ -229,6 +278,10 @@ public class RTCManager : MonoBehaviour
                 RestartICE();
                 status = "Status: " + state.ToString();
                 onStatusChange.Invoke(status);
+            }
+            else if (state == RTCPeerConnectionState.Disconnected)
+            {
+                OnClickQuit();
             }
             else
             {
