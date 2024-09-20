@@ -1,0 +1,93 @@
+install coturn
+-------------------------
+sudo apt install coturn
+
+sudo nano /etc/turnserver.conf
+
+
+
+
+
+document content
+-------------------------
+listening-port=3478
+listening-address=0.0.0.0
+
+realm=<your_realm> # Replace with a unique realm name (a nickname)
+
+users=
+  <your_username>:<your_password>:<your_secret>
+
+use-auth=yes
+use-relay=yes
+
+# For TLS (optional):
+# certfile=/etc/coturn/cert.pem
+# keyfile=/etc/coturn/key.pem
+# cafile=/etc/coturn/ca.pem
+
+
+
+
+
+
+
+
+turn test
+-------------------
+https://icetest.info/
+
+
+
+
+
+
+
+
+
+pm2 install
+-------------------------
+sudo npm install -g pm2
+
+
+
+
+
+
+
+
+
+
+
+
+procesus launching on Background
+-------------------------
+sudo pm2 start "sudo coturn" --name coturn
+
+sudo pm2 start "node WebRTCServer.js" --name webrtc
+
+sudo pm2 save // for auto launch on restart
+
+
+
+
+
+
+
+
+
+
+Monotiring
+-------------------------
+sudo pm2 status
+sudo pm2 logs coturn
+sudo pm2 logs webrtc
+
+
+
+
+
+
+
+Coturn Installation
+-------------------------------
