@@ -1,54 +1,133 @@
 using Newtonsoft.Json.Linq;
-using System.Collections;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
+/// <summary>
+/// Manages video streaming functionality, handling WebSocket connections, camera streaming, and UI updates.
+/// </summary>
 public class VideoStreamManager : MonoBehaviour
 {
-    [Header("Video Related")]
-    [SerializeField] private Camera streamCamera;  // Reference to the game camera
-    [SerializeField] private int frameRate = 30;   // Frame rate for streaming
-    [SerializeField] private int quality = 75;     // Quality of the streamed image (1-100)
+    #region Serialized Fields
 
+    [Header("Video Related")]
+    [SerializeField] private Camera streamCamera;
+    [SerializeField] private int frameRate = 30;
+    [SerializeField] private int quality = 75;
 
     [Header("UI Elements")]
-    [SerializeField] private TMP_InputField joinInputField; // Input field for room name
-    [SerializeField] private Button joinButton;          // Button to join a room
-    [SerializeField] private Button LeaveButton;          // Button to leave a room
+    [SerializeField] private TMP_InputField joinInputField;
+    [SerializeField] private Button joinButton;
+    [SerializeField] private Button LeaveButton;
     [SerializeField] private TMP_InputField fpsInputField;
     [SerializeField] private TMP_InputField qualityInputField;
     [SerializeField] private RawImage displayImage;
     [SerializeField] private CanvasGroup totalUi;
     [SerializeField] private TextMeshProUGUI statusMessage;
 
+    [SerializeField] private bool debugMessages = false;
+    [SerializeField] private bool testLocal = false;
+
+    #endregion
+
+    #region Private Fields
 
     private WebSocketManager webSocketManager;
     private byte[] imageData;
     private float frameTime;
     private bool isHost = false;
-    public bool testLocal = false;
     private RenderTexture renderTexture;
     private Texture2D texture2D;
+    private Texture2D texture;
 
-    [SerializeField] private bool debugMessages = false;
+    private static readonly Queue<Action> _executionQueue = new Queue<Action>();
 
+    #endregion
 
-    public void SetStatusMessage(string message)
+    #region Unity Lifecycle Methods
+
+    /// <summary>
+    /// Initializes WebSocket manager and sets up UI listeners and frame rate.
+    /// </summary>
+    private void Start()
     {
-        Enqueue(() =>
-        {
-            statusMessage.text = "Status: " + message;
-        });
+        InitializeWebSocketManager();
+        SetupUIListeners();
+        InitializeFrameRate();
     }
 
+    /// <summary>
+    /// Processes the execution queue during each frame update.
+    /// </summary>
+    private void Update()
+    {
+        ProcessExecutionQueue();
+    }
+
+    #endregion
+
+    #region Initialization Methods
+
+    /// <summary>
+    /// Initializes WebSocket manager and adds event listeners for socket communication.
+    /// </summary>
+    private void InitializeWebSocketManager()
+    {
+        webSocketManager = WebSocketManager.instance;
+        webSocketManager.OnSocketDisconnect.AddListener(OnBroadcastDisconnect);
+        webSocketManager.On("ReceivePlayerId", OnReceivePlayerId);
+    }
+
+    /// <summary>
+    /// Sets up button and input field event listeners for UI interactions.
+    /// </summary>
+    private void SetupUIListeners()
+    {
+        joinButton.onClick.AddListener(OnJoinButtonClicked);
+        LeaveButton.onClick.AddListener(OnLeaveButtonClicked);
+        qualityInputField.onValueChanged.AddListener(OnChangeQuality);
+        fpsInputField.onValueChanged.AddListener(OnChangeFPS);
+    }
+
+    /// <summary>
+    /// Initializes the frame rate and updates the corresponding UI fields.
+    /// </summary>
+    private void InitializeFrameRate()
+    {
+        frameTime = 1.0f / frameRate;
+        fpsInputField.text = frameRate.ToString();
+        qualityInputField.text = quality.ToString();
+    }
+
+    #endregion
+
+    #region UI Methods
+
+    /// <summary>
+    /// Updates the status message on the UI.
+    /// </summary>
+    /// <param name="message">The message to display.</param>
+    public void SetStatusMessage(string message)
+    {
+        Enqueue(() => statusMessage.text = "Status: " + message);
+    }
+
+    /// <summary>
+    /// Enables or disables user interaction with the UI elements.
+    /// </summary>
+    /// <param name="active">True to enable UI interaction, false to disable.</param>
     public void SetInteractUI(bool active)
     {
         totalUi.interactable = active;
     }
 
+    /// <summary>
+    /// Toggles the visibility of various UI elements when joining or leaving a room.
+    /// </summary>
+    /// <param name="active">True to activate room join UI, false to show streaming UI.</param>
     public void SetActivateUI(bool active)
     {
         joinInputField.gameObject.SetActive(active);
@@ -60,107 +139,36 @@ public class VideoStreamManager : MonoBehaviour
         joinInputField.text = "";
     }
 
+    #endregion
 
-    private static readonly Queue<Action> _executionQueue = new Queue<Action>();
-    public static void Enqueue(Action action)
-    {
-        lock (_executionQueue)
-        {
-            _executionQueue.Enqueue(action);
-        }
-    }
+    #region Button Click Handlers
 
-    private void Update()
-    {
-        lock (_executionQueue)
-        {
-            while (_executionQueue.Count > 0)
-            {
-                var action = _executionQueue.Dequeue();
-                action.Invoke();
-            }
-        }
-
-    }
-
-    private void DebugMessage(string message)
-    {
-        if (debugMessages)
-        {
-            Debug.Log(message);
-        }
-    }
-
-    // Start is called before the first frame update
-
-    public void Start()
-    {
-        // Ensure the WebSocketManager is accessible
-        webSocketManager = WebSocketManager.instance;
-        webSocketManager.OnSocketDisconnect.AddListener(OnBroadcastDisconnect);
-
-        // Subscribe to button click events
-        joinButton.onClick.AddListener(OnJoinButtonClicked);
-        LeaveButton.onClick.AddListener(OnLeaveButtonClicked);
-
-        qualityInputField.onValueChanged.AddListener(OnChangeQuality);
-        fpsInputField.onValueChanged.AddListener(OnChangeFPS);
-
-        // Subscribe to the event for receiving player ID
-        webSocketManager.On("ReceivePlayerId", OnReceivePlayerId);
-        // Setup frame time based on the target frame rate
-        frameTime = 1.0f / frameRate;
-
-        fpsInputField.text = frameRate.ToString();
-        qualityInputField.text = quality.ToString();
-    }
-
-
-    private void OnChangeFPS(string text)
-    {
-        if (text == "")
-        {
-            return;
-        }
-        frameRate = int.Parse(text);
-    }
-
-    private void OnChangeQuality(string text)
-    {
-        if (text == "")
-        {
-            return;
-        }
-        quality = int.Parse(text);
-    }
-
-    private void OnLeaveButtonClicked()
-    {
-        webSocketManager.Disconnect();
-    }
-
-    private bool isRoomNameValid()
-    {
-        if (joinInputField.text.Length > 0)
-        {
-            return true;
-        }
-        return false;
-    }
-
+    /// <summary>
+    /// Handles the join button click event, validates the room name, and connects to the WebSocket server.
+    /// </summary>
     private void OnJoinButtonClicked()
     {
-        if (!isRoomNameValid())
-        {
-            SetStatusMessage("Room name must not be empty");
-            return;
-        }
-        // Connect to the socket and subscribe to receive player ID
+        if (!IsRoomNameValid()) return;
         SetInteractUI(false);
         SetStatusMessage("Connecting to server...");
         webSocketManager.Connect(OnConnectedToSocket);
     }
 
+    /// <summary>
+    /// Handles the leave button click event and disconnects from the WebSocket server.
+    /// </summary>
+    private void OnLeaveButtonClicked()
+    {
+        webSocketManager.Disconnect();
+    }
+
+    #endregion
+
+    #region WebSocket Event Handlers
+
+    /// <summary>
+    /// Called when successfully connected to the WebSocket server.
+    /// </summary>
     private void OnConnectedToSocket()
     {
         DebugMessage("Connected to WebSocket.");
@@ -168,40 +176,20 @@ public class VideoStreamManager : MonoBehaviour
         SetStatusMessage("Connected to server");
     }
 
-    private void BroadcastFatalError(JObject Jobject)
-    {
-        SetStatusMessage(Jobject["message"].ToString());
-        webSocketManager.Disconnect();
-        DebugMessage(Jobject["message"].ToString());
-        DebugMessage("Fatal error from server , disconnected");
-    }
-
+    /// <summary>
+    /// Handles receiving the player ID from the server after joining a room.
+    /// </summary>
+    /// <param name="json">The JSON object containing the player ID.</param>
     private void OnReceivePlayerId(JObject json)
     {
-        // Extract the player ID from the received message
         string playerId = json["data"]["id"].ToString();
-
-        // After receiving the player ID, send the room name to the server
         SendRoomNameToServer();
     }
 
-    private void SendRoomNameToServer()
-    {
-        string roomName = joinInputField.text;
-
-        // Prepare the message to send
-        var message = new
-        {
-            roomName = roomName,
-        };
-
-        // Send the message to the server
-        webSocketManager.On("JoinBroadcastResult", OnJoinBroadcastResult);
-        SetStatusMessage("Joining room " + roomName);
-        webSocketManager.SendSocketMessage("JoinBroadcast", message);
-        DebugMessage("Sent Room Name: " + roomName);
-    }
-
+    /// <summary>
+    /// Handles the result of joining a broadcast, updating the UI accordingly.
+    /// </summary>
+    /// <param name="Jobject">The JSON object containing the result of the join request.</param>
     private void OnJoinBroadcastResult(JObject Jobject)
     {
         Enqueue(() =>
@@ -217,27 +205,27 @@ public class VideoStreamManager : MonoBehaviour
 
                 if (isHost)
                 {
-                    SetStatusMessage("Succesfully hosted room " + Jobject["broadcastId"].ToString());
-                    if (!testLocal)
-                    {
-                        displayImage.gameObject.SetActive(false);
-                    }
+                    SetStatusMessage("Successfully hosted room " + Jobject["broadcastId"].ToString());
+                    if (!testLocal) displayImage.gameObject.SetActive(false);
                     StartStream();
                 }
                 else
                 {
-                    SetStatusMessage("Succesfully joined room " + Jobject["broadcastId"].ToString());
+                    SetStatusMessage("Successfully joined room " + Jobject["broadcastId"].ToString());
                     webSocketManager.On("StreamResult", OnStreamResult);
                 }
             }
             catch (Exception ex)
             {
-                Debug.LogError(ex.Message.ToString());
-                Debug.LogError(ex.ToString());
+                Debug.LogError($"{ex.Message}\n{ex}");
             }
         });
     }
 
+    /// <summary>
+    /// Handles the broadcast disconnect event from the server.
+    /// </summary>
+    /// <param name="Jobject">The JSON object containing the disconnect message.</param>
     private void OnBroadcastDisconnect(JObject Jobject)
     {
         Enqueue(() =>
@@ -245,21 +233,19 @@ public class VideoStreamManager : MonoBehaviour
             try
             {
                 DebugMessage(Jobject["message"].ToString());
-                if (webSocketManager.isSocketConnected)
-                {
-                    webSocketManager.Disconnect();
-                }
-                SetStatusMessage(Jobject["message"].ToString());
-                SetActivateUI(true);
+                DisconnectAndResetUI(Jobject["message"].ToString());
             }
             catch (Exception e)
             {
-                Debug.LogError(e.Message.ToString());
-                Debug.LogError(e);
+                Debug.LogError($"{e.Message}\n{e}");
             }
         });
     }
 
+    /// <summary>
+    /// Handles the broadcast disconnect event with a simple message.
+    /// </summary>
+    /// <param name="msg">The disconnect message.</param>
     private void OnBroadcastDisconnect(string msg)
     {
         Enqueue(() =>
@@ -267,22 +253,19 @@ public class VideoStreamManager : MonoBehaviour
             try
             {
                 DebugMessage("You've been disconnected from the broadcast");
-                if (webSocketManager.isSocketConnected)
-                {
-                    webSocketManager.Disconnect();
-                }
-                SetStatusMessage("You've been disconnected from the broadcast");
-                SetActivateUI(true);
+                DisconnectAndResetUI("You've been disconnected from the broadcast");
             }
             catch (Exception e)
             {
-                Debug.LogError(e.Message.ToString());
-                Debug.LogError(e);
+                Debug.LogError($"{e.Message}\n{e}");
             }
         });
     }
 
-
+    /// <summary>
+    /// Handles receiving the streaming result, such as image data from the server.
+    /// </summary>
+    /// <param name="Jobject">The JSON object containing the stream result.</param>
     private void OnStreamResult(JObject Jobject)
     {
         Enqueue(() =>
@@ -290,107 +273,224 @@ public class VideoStreamManager : MonoBehaviour
             try
             {
                 string images = Jobject["data"]["data"].ToString();
-                RecieveImages(images);
+                ReceiveImages(images);
             }
             catch (Exception ex)
             {
-                Debug.LogError(ex.Message);
-                Debug.LogError(ex);
+                Debug.LogError($"{ex.Message}\n{ex}");
             }
         });
     }
 
-    void StartStream()
+    #endregion
+
+    #region Streaming Methods
+
+    /// <summary>
+    /// Starts the video stream from the camera.
+    /// </summary>
+    private void StartStream()
     {
         try
         {
-            // Setup the RenderTexture and Texture2D for capturing the camera image
-            renderTexture = new RenderTexture(Screen.width, Screen.height, 24);
-            texture2D = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
-
-            // Assign the renderTexture to the camera
-            streamCamera.targetTexture = renderTexture;
-
-            // Start streaming coroutine
+            InitializeRenderTexture();
             StartCoroutine(StreamVideo());
         }
         catch (Exception ex)
         {
-            Debug.LogError($"{ex.Message}");
-            Debug.LogError($"{ex}");
+            Debug.LogError($"{ex.Message}\n{ex}");
         }
     }
 
-    private Texture2D texture;
-    // Coroutine to handle streaming at a set frame rate
-    IEnumerator StreamVideo()
+    /// <summary>
+    /// Coroutine to continuously stream the video at the specified frame rate.
+    /// </summary>
+    private IEnumerator StreamVideo()
     {
         while (true)
         {
-            // Wait for the next frame based on the defined frame rate
             yield return new WaitForSeconds(frameTime);
-            // Capture the image from the camera
             CaptureCameraImage();
-
-            // Encode the image to a byte array (using JPG format)
             imageData = texture2D.EncodeToJPG(quality);
-            string b64 = System.Convert.ToBase64String(imageData);
-            if (testLocal && isHost)
-            {
-                RecieveImages(b64);
-            }
+            string b64 = Convert.ToBase64String(imageData);
 
+            if (testLocal && isHost) ReceiveImages(b64);
             if (webSocketManager.isSocketConnected && isHost)
             {
                 webSocketManager.SendSocketMessage("Stream", new { data = b64 });
             }
-
         }
     }
 
-    public void RecieveImages(byte[] imageData)
+    /// <summary>
+    /// Captures the camera image and stores it in the texture.
+    /// </summary>
+    private void CaptureCameraImage()
     {
-        if (texture == null)
-        {
-            // Create a new Texture2D
-            texture = new Texture2D(2, 2); // Start with a small texture size
-        }
-
-        // Load the image data into the texture
-        texture.LoadImage(imageData);
-        // Assign the texture to the RawImage
-        displayImage.texture = texture;
-    }
-
-    public void RecieveImages(string b64)
-    {
-        b64 = b64.Replace("\n", "").Replace("\r", "");
-        byte[] imageData = System.Convert.FromBase64String(b64);
-        if (texture == null)
-        {
-            // Create a new Texture2D
-            texture = new Texture2D(2, 2); // Start with a small texture size
-        }
-
-        // Load the image data into the texture
-        texture.LoadImage(imageData);
-        // Assign the texture to the RawImage
-        displayImage.texture = texture;
-    }
-
-    // Capture the camera image and store it in texture2D
-    void CaptureCameraImage()
-    {
-        // Set the camera to render into the RenderTexture
         RenderTexture.active = renderTexture;
         streamCamera.Render();
-
-        // Copy the RenderTexture to the Texture2D
         texture2D.ReadPixels(new Rect(0, 0, renderTexture.width, renderTexture.height), 0, 0);
         texture2D.Apply();
-
-        // Clear the active RenderTexture
         RenderTexture.active = null;
     }
 
+    #endregion
+
+    #region Helper Methods
+
+    /// <summary>
+    /// Enqueues an action to be executed on the main thread.
+    /// </summary>
+    /// <param name="action">The action to enqueue.</param>
+    private static void Enqueue(Action action)
+    {
+        lock (_executionQueue)
+        {
+            _executionQueue.Enqueue(action);
+        }
+    }
+
+    /// <summary>
+    /// Processes and executes all queued actions.
+    /// </summary>
+    private void ProcessExecutionQueue()
+    {
+        lock (_executionQueue)
+        {
+            while (_executionQueue.Count > 0)
+            {
+                _executionQueue.Dequeue().Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Logs debug messages if debug mode is enabled.
+    /// </summary>
+    /// <param name="message">The message to log.</param>
+    private void DebugMessage(string message)
+    {
+        if (debugMessages)
+        {
+            Debug.Log(message);
+        }
+    }
+
+    /// <summary>
+    /// Checks if the room name is valid.
+    /// </summary>
+    /// <returns>True if the room name is valid, false otherwise.</returns>
+    private bool IsRoomNameValid()
+    {
+        if (string.IsNullOrEmpty(joinInputField.text))
+        {
+            SetStatusMessage("Room name must not be empty");
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Sends the room name to the server to join a broadcast.
+    /// </summary>
+    private void SendRoomNameToServer()
+    {
+        string roomName = joinInputField.text;
+        var message = new { roomName };
+        webSocketManager.On("JoinBroadcastResult", OnJoinBroadcastResult);
+        SetStatusMessage("Joining room " + roomName);
+        webSocketManager.SendSocketMessage("JoinBroadcast", message);
+        DebugMessage("Sent Room Name: " + roomName);
+    }
+
+    /// <summary>
+    /// Disconnects from the WebSocket and resets the UI.
+    /// </summary>
+    /// <param name="statusMessage">The status message to display after disconnection.</param>
+    private void DisconnectAndResetUI(string statusMessage)
+    {
+        if (webSocketManager.isSocketConnected)
+        {
+            webSocketManager.Disconnect();
+        }
+        SetStatusMessage(statusMessage);
+        SetActivateUI(true);
+    }
+
+    /// <summary>
+    /// Initializes the render texture for capturing camera output.
+    /// </summary>
+    private void InitializeRenderTexture()
+    {
+        renderTexture = new RenderTexture(Screen.width, Screen.height, 24);
+        texture2D = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
+        streamCamera.targetTexture = renderTexture;
+    }
+
+    #endregion
+
+    #region Image Handling Methods
+
+    /// <summary>
+    /// Processes and displays received image data in byte array format.
+    /// </summary>
+    /// <param name="imageData">The image data in byte array format.</param>
+    public void ReceiveImages(byte[] imageData)
+    {
+        if (texture == null)
+        {
+            texture = new Texture2D(2, 2);
+        }
+        texture.LoadImage(imageData);
+        displayImage.texture = texture;
+    }
+
+    /// <summary>
+    /// Processes and displays received image data in base64 string format.
+    /// </summary>
+    /// <param name="b64">The base64 string representation of the image data.</param>
+    public void ReceiveImages(string b64)
+    {
+        b64 = b64.Replace("\n", "").Replace("\r", "");
+        byte[] imageData = Convert.FromBase64String(b64);
+        ReceiveImages(imageData);
+    }
+
+    #endregion
+
+    #region UI Event Handlers
+
+    /// <summary>
+    /// Handles changes in the FPS input field and updates the frame rate.
+    /// </summary>
+    /// <param name="text">The new FPS value as a string.</param>
+    private void OnChangeFPS(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        frameRate = int.Parse(text);
+        frameTime = 1.0f / frameRate;
+    }
+
+    /// <summary>
+    /// Handles changes in the quality input field and updates the image quality.
+    /// </summary>
+    /// <param name="text">The new quality value as a string.</param>
+    private void OnChangeQuality(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        quality = int.Parse(text);
+    }
+
+    /// <summary>
+    /// Handles a fatal error broadcast from the server, disconnects, and logs the error message.
+    /// </summary>
+    /// <param name="Jobject">The JSON object containing the fatal error message.</param>
+    private void BroadcastFatalError(JObject Jobject)
+    {
+        SetStatusMessage(Jobject["message"].ToString());
+        webSocketManager.Disconnect();
+        DebugMessage($"{Jobject["message"]} - Fatal error from server, disconnected");
+    }
+
+    #endregion
 }
