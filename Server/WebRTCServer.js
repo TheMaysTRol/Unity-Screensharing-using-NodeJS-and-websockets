@@ -1,74 +1,79 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const wss = new WebSocket.Server({ port: 3000 });
-const clients = new Map();
-let broadcaster = null;
+const broadcasts = new Map();  // Stores multiple broadcasts by broadcastId
 
-function handleStartBroadcast(ws) {
-    broadcaster = ws;
-    console.log('Broadcast started by:', ws.clientId);
-}
-
-function handleJoinBroadcast(ws) {
-    if (broadcaster) {
-        console.log('Client joined broadcast:', ws.clientId);
-        SendTo(broadcaster.clientId, { id: 'RequestOffer', data: { peerId: ws.clientId } });
-    } else {
-        console.log('No active broadcast to join');
-        SendLocal(ws, { id: 'Error', data: { message: 'No active broadcast to join' } });
-    }
-}
-
-function handlePeerMessage(ws, data) {
-    if (!data.data.targetId) {
-        console.error('Target ID missing in peer message');
-        return;
-    }
-    
-    if (data.id === "OFFER" || data.id === "ANSWER" || data.id === "CANDIDATE") {
-        SendTo(data.data.targetId, {
-            id: data.id,
-            data: data.data,
-            fromId: ws.clientId
-        });
-    }
+class Broadcast {
+  constructor(id, owner) {
+    this.id = id;
+    this.owner = owner;
+    this.connectedUsers = [];
+  }
 }
 
 function SendLocal(ws, data) {
     ws.send(JSON.stringify(data));
 }
 
-function SendTo(targetClientId, data) {
-    const targetClient = clients.get(targetClientId);
-    if (targetClient) {
-        targetClient.send(JSON.stringify(data));
-    } else {
-        console.log('Target client not found:', targetClientId);
+function cleanupBroadcast(broadcastId) {
+    if (broadcasts.has(broadcastId)) {
+        const broadcast = broadcasts.get(broadcastId);
+        for (const user of broadcast.connectedUsers) {
+            SendLocal(user, { id: 'BroadcastDisconnect', message: `The host has disconnected. You will be disconnected.` });
+            user.connectedBroadcast = null; // Clear the connected broadcast reference
+            user.isHost = null; // Clear the connected broadcast reference
+        }
+        broadcasts.delete(broadcastId); // Remove the broadcast from memory
+        console.log(`Broadcast ${broadcastId} cleaned up.`);
     }
+}
+
+function handleStartBroadcast(ws, broadcastId) {
+  if(broadcastId.length <=0){
+	  SendLocal(ws,{id:'BroadcastFatalError',message:"Broadcastname can't be empty"});
+	  console.log("Broadcast ID must not be empty");
+	  return;
+  }
+  isHost  = false;
+  if (broadcasts.has(broadcastId)) {
+    console.log(`Joining broadcast: ${broadcastId}`);
+  }else{
+    console.log(`Hosting broadcast: ${broadcastId}`);
+	broadcasts.set(broadcastId, new Broadcast(broadcastId, ws.clientId));
+	isHost = true;
+  }
+    ws.connectedBroadcast = broadcastId;
+	ws.isHost = isHost;
+  	broadcasts.get(broadcastId).connectedUsers.push(ws);
+	SendLocal(ws,{id:'JoinBroadcastResult',broadcastId:broadcastId,isHost:isHost,message:"Broadcast is created succesfully"});
+}
+
+function Stream(ws,data){
+	if (ws.connectedBroadcast && broadcasts.has(ws.connectedBroadcast) && ws.isHost) {
+		// Loop through all clients to broadcast the message
+        broadcasts.get(ws.connectedBroadcast).connectedUsers.forEach((websock) => {
+            if (websock.clientId !== ws.clientId) { // Optional: Avoid sending the message back to the sender
+				SendLocal(websock,{id:'StreamResult',data:data.data});
+            }
+        });
+	}
 }
 
 wss.on('connection', (ws) => {
     const clientId = uuidv4();
     ws.clientId = clientId;
-    clients.set(clientId, ws);
     console.log('New client connected:', clientId);
-    SendLocal(ws, { id: 'GetId', data: { id: clientId } });
+    SendLocal(ws, { id: 'ReceivePlayerId', data: { id: clientId } });
 
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            console.log('Received data:', data);
             switch (data.id) {
-                case 'Start_Broadcast':
-                    handleStartBroadcast(ws);
+                case 'JoinBroadcast':
+                    handleStartBroadcast(ws, data.data.roomName)
                     break;
-                case 'Join_Broadcast':
-                    handleJoinBroadcast(ws);
-                    break;
-                case 'OFFER':
-                case 'ANSWER':
-                case 'CANDIDATE':
-                    handlePeerMessage(ws, data);
+				case 'Stream':
+                    Stream(ws,data)
                     break;
                 default:
                     console.log('Unknown message type:', data.id);
@@ -80,9 +85,19 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         console.log('Client disconnected:', clientId);
-        clients.delete(clientId);
-        if (broadcaster === ws) {
-            broadcaster = null;
+		const connectedBroadcast = ws.connectedBroadcast;
+        if (connectedBroadcast) {
+            const broadcast = broadcasts.get(connectedBroadcast);
+            if (broadcast) {
+                // Remove the user from the broadcast
+                broadcast.connectedUsers = broadcast.connectedUsers.filter(user => user !== ws);
+                console.log(`Removed client ${clientId} from broadcast ${connectedBroadcast}`);
+                
+                // If the host disconnects
+                if (ws.isHost) {
+                    cleanupBroadcast(connectedBroadcast);
+                }
+            }
         }
     });
 });
