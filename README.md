@@ -10,6 +10,10 @@ This project is a **WebSocket-based system** that allows users to create or join
 - **Join Broadcasts**: Other users can join the existing broadcasts as participants.
 - **Real-time Streaming**: The host can stream data to all participants in real-time.
 - **WebSocket Management**: Handles connection events, errors, and disconnections gracefully.
+- **Framerate and Quality Settings**: You can also choose the **framerate** and **sharing quality** for streaming to optimize the broadcast experience based on network conditions or device capabilities.
+- 
+![Screenshot1](Images/Screenshot1.jpg)
+![Screenshot2](Images/Screenshot2.jpg)
 
 ## Requirements
 - Unity 2021.1 or higher.
@@ -31,11 +35,14 @@ This component allows a Unity game or application to connect to a WebSocket serv
 - **VideoStreamManager.cs**:
   - Handles the logic for creating, joining, and leaving broadcasts.
   - Manages sending data from the Unity client to the WebSocket server for broadcasting.
+  - Includes controls for adjusting **framerate** and **streaming quality**.
+  
 ![VideoStreamManager](Images/VideoStreamManager.jpg)
 #### Unity Client Setup:
 1. Add the `WebSocketManager` script to a GameObject in your Unity scene.
 2. Configure the WebSocket server details (IP and port) in the Unity inspector.
 3. Use the `VideoStreamManager` to create, join, or leave broadcasts.
+4. Adjust the **framerate** and **quality settings** in the `VideoStreamManager` to suit your streaming needs.
 
 ### 2. WebSocket Server (Node.js)
 The WebSocket server allows clients to create or join broadcasts and handles data streaming between clients.
@@ -77,7 +84,8 @@ The WebSocket server allows clients to create or join broadcasts and handles dat
 3. **Create or Join Broadcast**:
     - Use the Unity interface (UI buttons, for example) to create or join a broadcast.
     - If you are the host, stream data to all participants.
-  
+    - Adjust the **framerate** and **streaming quality** from the Unity interface to manage broadcast performance based on network or device conditions.
+
 ## Example Flow
 1. **Client 1** starts the Unity application and creates a broadcast.
 2. **Client 2** joins the broadcast using the broadcast ID.
