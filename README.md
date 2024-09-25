@@ -26,16 +26,16 @@ This component allows a Unity game or application to connect to a WebSocket serv
   - Manages WebSocket connections and provides methods for sending and receiving messages.
   - Handles subscribing to events and processing responses from the server.
 
-![Insert image here (Screenshot of Unity WebSocket Manager component in the Unity editor)]()
+![WebSocketManager](Images/WebSocketManager.jpg)
 
-- **BroadcastManager.cs**:
+- **VideoStreamManager.cs**:
   - Handles the logic for creating, joining, and leaving broadcasts.
   - Manages sending data from the Unity client to the WebSocket server for broadcasting.
-
+![VideoStreamManager](Images/VideoStreamManager.jpg)
 #### Unity Client Setup:
 1. Add the `WebSocketManager` script to a GameObject in your Unity scene.
 2. Configure the WebSocket server details (IP and port) in the Unity inspector.
-3. Use the `BroadcastManager` to create, join, or leave broadcasts.
+3. Use the `VideoStreamManager` to create, join, or leave broadcasts.
 
 ### 2. WebSocket Server (Node.js)
 The WebSocket server allows clients to create or join broadcasts and handles data streaming between clients.
@@ -45,8 +45,6 @@ The WebSocket server allows clients to create or join broadcasts and handles dat
   - Main WebSocket server file built using `ws` library.
   - Uses `uuid` to generate unique client IDs and broadcast IDs.
   - Manages multiple broadcasts, handles client connections, disconnections, and message streaming.
-
-![Insert image here (Diagram showing WebSocket server handling multiple broadcasts and clients)]()
 
 #### Server Setup:
 1. Install dependencies:
@@ -73,7 +71,7 @@ The WebSocket server allows clients to create or join broadcasts and handles dat
 2. **Unity Client Setup**:
     - Clone the Unity project and open it in Unity.
     - Set the WebSocket server IP and port in the `WebSocketManager` component in the Unity Editor.
-    - Create a scene and add a GameObject with the `WebSocketManager` and `BroadcastManager` scripts attached.
+    - Create a scene and add a GameObject with the `WebSocketManager` and `VideoStreamManager` scripts attached.
     - Run the Unity project to connect to the WebSocket server and create or join broadcasts.
 
 3. **Create or Join Broadcast**:
@@ -92,7 +90,7 @@ The WebSocket server allows clients to create or join broadcasts and handles dat
 │
 ├── /UnityClient
 │   ├── WebSocketManager.cs   // Manages WebSocket communication
-│   ├── BroadcastManager.cs   // Manages creating and joining broadcasts
+│   ├── VideoStreamManager.cs   // Manages creating and joining broadcasts
 │   └── ...                   // Unity project files
 │
 ├── /Server
