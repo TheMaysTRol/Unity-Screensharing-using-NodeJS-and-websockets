@@ -35,7 +35,7 @@ public class WebSocketManager : MonoBehaviour
     public static WebSocketManager instance;
     public UnityEvent OnSocketConnect;
     public UnityEvent<string> OnSocketDisconnect;
-    public string mySocketID = "";
+    private string mySocketID = "";
 
     #endregion
 
