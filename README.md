@@ -12,8 +12,9 @@ This project is a **WebSocket-based system** that allows users to create or join
 - **WebSocket Management**: Handles connection events, errors, and disconnections gracefully.
 - **Framerate and Quality Settings**: You can also choose the **framerate** and **sharing quality** for streaming to optimize the broadcast experience based on network conditions or device capabilities.
 - 
-![Screenshot1](Images/screenshot1.jpg)
-![Screenshot2](Images/screenshot2.jpg)
+![Screenshot1](Images/ShareGif.gif)
+![Screenshot1](Images/screenshot1.png)
+![Screenshot2](Images/screenshot2.png)
 
 ## Requirements
 - Unity 2021.1 or higher.
