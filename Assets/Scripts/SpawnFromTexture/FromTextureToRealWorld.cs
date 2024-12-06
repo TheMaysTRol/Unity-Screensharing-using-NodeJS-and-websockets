@@ -2,94 +2,154 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
+using System;
 
 public class FromTextureToRealWorld : MonoBehaviour, IPointerClickHandler
 {
     [Header("UI Components")]
-    [Tooltip("The RawImage component showing the RenderTexture.")]
     public RawImage rawImage;
 
     [Header("Camera")]
-    [Tooltip("The camera rendering to the RenderTexture.")]
-    public Camera renderCamera;
+    public Camera mainCamera;
 
     [Header("Spawnable Objects")]
-    [Tooltip("List of spawnable objects, each defined as a ScriptableObject.")]
     public List<SpawnableObjectThroughTextureSO> spawnableObjects;
+    [SerializeField] private Transform spawnObjectsParent;
 
-    /// <summary>
-    /// This method is triggered when a click is detected on the RawImage.
-    /// It calculates the 3D world position based on the click and spawns an object.
-    /// </summary>
-    /// <param name="eventData">Pointer data from the click event.</param>
-    public void OnPointerClick(PointerEventData eventData)
+    [SerializeField] private VideoStreamManager videoStreamManager;
+
+    private int selectedObjectID = 0;
+
+    public enum DeviceType
     {
-        if (eventData.button == PointerEventData.InputButton.Left)
-        {
-            Vector3? spawnPosition = CalculateSpawnPosition(eventData);
+        Mobile,
+        Desktop,
+        VR
+    }
 
-            // If a valid spawn position was found, spawn an object at that position
-            if (spawnPosition.HasValue)
-            {
-                SpawnObjectAtPosition(spawnPosition.Value);
-            }
+    [Header("Device Settings")]
+    public DeviceType currentDeviceType;
+
+    [Header("VR Settings")]
+    [Tooltip("The camera used for VR rendering (usually the center eye anchor)")]
+    public Camera vrCamera;
+
+    [Tooltip("Reference to the VR player's head transform")]
+    public Transform vrHeadTransform;
+
+    private void Start()
+    {
+        if (videoStreamManager.IsConnected())
+        {
+            WebSocketManager.instance.On("Instantiate", OnReceiveInstantiation);
+        }
+
+        if (currentDeviceType == DeviceType.Desktop && Application.isMobilePlatform)
+        {
+            currentDeviceType = DeviceType.Mobile;
+            Debug.Log("Auto-detected Mobile platform");
         }
     }
 
-    /// <summary>
-    /// Calculates the 3D world position where the object should be spawned.
-    /// This method casts a ray from the 2D click position on the RawImage into the 3D world.
-    /// </summary>
-    /// <param name="eventData">Pointer data from the click event.</param>
-    /// <returns>3D world position to spawn the object, or null if no valid position was found.</returns>
-    private Vector3? CalculateSpawnPosition(PointerEventData eventData)
+    private void OnReceiveInstantiation(JObject Jobject)
     {
-        // Get the RectTransform of the RawImage
+        try
+        {
+            int objectID = int.Parse(Jobject["data"]["data"]["ObjectID"].ToString());
+            Vector2 normalizedPosition = new Vector2(
+                (float)Jobject["data"]["data"]["Position"]["x"],
+                (float)Jobject["data"]["data"]["Position"]["y"]
+            );
+            Debug.Log($"Received instantiation request: ObjectID={objectID}, NormalizedPosition=({normalizedPosition.x}, {normalizedPosition.y})");
+
+            Vector3? spawnPosition = CalculateSpawnPosition(normalizedPosition);
+            if (spawnPosition.HasValue)
+            {
+                InstantiateObject(objectID, spawnPosition.Value);
+            }
+            else
+            {
+                Debug.LogWarning("Failed to calculate a valid spawn position.");
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error in OnReceiveInstantiation: {e.Message}");
+        }
+    }
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (videoStreamManager != null && videoStreamManager.IsConnected() && eventData.button == PointerEventData.InputButton.Left)
+        {
+            Vector2 normalizedPosition = NormalizePointerPosition(eventData.position);
+            SpawnObjectAtPosition(selectedObjectID, normalizedPosition);
+        }
+    }
+
+    private Vector2 NormalizePointerPosition(Vector2 pointerPosition)
+    {
         RectTransform rt = rawImage.rectTransform;
-
-        // Convert the click from screen space to local space within the RawImage
         Vector2 localPoint;
-        RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, eventData.position, eventData.pressEventCamera, out localPoint);
+        RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, pointerPosition, null, out localPoint);
 
-        // Convert the local point into a normalized coordinate (0 to 1 range)
-        Vector2 normalizedPoint = new Vector2(
-            (localPoint.x - rt.rect.x) / rt.rect.width,
-            (localPoint.y - rt.rect.y) / rt.rect.height
-        );
+        return Rect.PointToNormalized(rt.rect, localPoint);
+    }
 
-        // Convert the normalized point to a screen point in the RenderTexture's space
+    private Vector3? CalculateSpawnPosition(Vector2 normalizedPosition)
+    {
+        switch (currentDeviceType)
+        {
+            case DeviceType.Mobile:
+            case DeviceType.Desktop:
+                return CalculateSpawnPositionScreen(normalizedPosition);
+            case DeviceType.VR:
+                return CalculateSpawnPositionVR(normalizedPosition);
+            default:
+                Debug.LogError("Unknown device type");
+                return null;
+        }
+    }
+
+    private Vector3? CalculateSpawnPositionScreen(Vector2 normalizedPosition)
+    {
         Vector3 screenPoint = new Vector3(
-            normalizedPoint.x * renderCamera.pixelWidth,
-            normalizedPoint.y * renderCamera.pixelHeight,
-            0f
+            normalizedPosition.x * mainCamera.pixelWidth,
+            normalizedPosition.y * mainCamera.pixelHeight,
+            mainCamera.nearClipPlane
         );
 
-        // Cast a ray from the renderCamera through the clicked point
-        Ray ray = renderCamera.ScreenPointToRay(screenPoint);
-
-        // Perform the raycast to find a hit in the 3D world
+        Ray ray = mainCamera.ScreenPointToRay(screenPoint);
         RaycastHit hit;
+
         if (Physics.Raycast(ray, out hit))
         {
-            // Get the normal of the surface where the ray hit
-            Vector3 surfaceNormal = hit.normal;
-
-            // Determine if the surface is vertical or horizontal based on the y-component of the normal
-            bool isVertical = Mathf.Abs(surfaceNormal.y) < 0.5f;
-
-            // Return the calculated hit position
+            Debug.Log($"Screen Raycast hit at world position: {hit.point}");
             return hit.point;
         }
 
-        // If no valid position was found, return null
+        Debug.LogWarning("Screen Raycast did not hit any collider.");
         return null;
     }
 
-    /// <summary>
-    /// Spawns a randomly selected object from the list at the given position in the 3D world.
-    /// </summary>
-    /// <param name="position">The 3D world position where the object should be spawned.</param>
-    private void SpawnObjectAtPosition(Vector3 position)
+    private Vector3? CalculateSpawnPositionVR(Vector2 normalizedPosition)
+    {
+        // Use the ViewportPointToRay method instead of manually adjusting the ray direction
+        Ray ray = vrCamera.ViewportPointToRay(new Vector3(normalizedPosition.x, normalizedPosition.y, 0));
+        RaycastHit hit;
+
+        if (Physics.Raycast(ray, out hit))
+        {
+            Debug.Log($"VR Raycast hit at world position: {hit.point}");
+            return hit.point;
+        }
+
+        Debug.LogWarning("VR Raycast did not hit any collider.");
+        return null;
+    }
+
+    private void SpawnObjectAtPosition(int objectID, Vector2 normalizedPosition)
     {
         if (spawnableObjects.Count == 0)
         {
@@ -97,37 +157,48 @@ public class FromTextureToRealWorld : MonoBehaviour, IPointerClickHandler
             return;
         }
 
-        // Choose a random object from the list of spawnable objects
-        SpawnableObjectThroughTextureSO spawnableObject = spawnableObjects[Random.Range(0, spawnableObjects.Count)];
-
-        // Get the hit position and adjust based on the object's offsets
-        Vector3 adjustedPosition = AdjustSpawnPosition(position, spawnableObject);
-
-        // Instantiate the selected object at the given position
-        Instantiate(spawnableObject.prefab, adjustedPosition, Quaternion.identity);
-
-        Debug.Log("Spawned object at: " + adjustedPosition);
+        if (videoStreamManager.isHosting())
+        {
+            Vector3? spawnPosition = CalculateSpawnPosition(normalizedPosition);
+            if (spawnPosition.HasValue)
+            {
+                InstantiateObject(objectID, spawnPosition.Value);
+            }
+            else
+            {
+                Debug.LogWarning("Failed to calculate a valid spawn position.");
+            }
+        }
+        else if (videoStreamManager.IsJoined())
+        {
+            WebSocketManager.instance.SendSocketMessage("Instantiate", new { ObjectID = objectID, Position = new { x = normalizedPosition.x, y = normalizedPosition.y } });
+        }
     }
 
-    /// <summary>
-    /// Adjusts the spawn position based on the surface type and object's specific offsets.
-    /// </summary>
-    /// <param name="position">Original 3D position based on the raycast hit.</param>
-    /// <param name="spawnableObject">The object being spawned, containing prefab and offsets.</param>
-    /// <returns>Adjusted 3D position for the spawn.</returns>
+    public void InstantiateObject(int objectID, Vector3 position)
+    {
+        if (objectID < 0 || objectID >= spawnableObjects.Count)
+        {
+            Debug.LogError($"Invalid objectID: {objectID}");
+            return;
+        }
+
+        SpawnableObjectThroughTextureSO spawnableObject = spawnableObjects[objectID];
+        Vector3 adjustedPosition = AdjustSpawnPosition(position, spawnableObject);
+
+        GameObject spawnedObject = Instantiate(spawnableObject.prefab, adjustedPosition, Quaternion.identity, spawnObjectsParent);
+        Debug.Log($"Spawned object {spawnableObject.prefab.name} at: {adjustedPosition}");
+    }
+
     private Vector3 AdjustSpawnPosition(Vector3 position, SpawnableObjectThroughTextureSO spawnableObject)
     {
-        // Cast a ray again to get the surface normal for offsetting the object
-        Ray ray = renderCamera.ScreenPointToRay(renderCamera.WorldToScreenPoint(position));
+        Ray ray = new Ray(mainCamera.transform.position, position - mainCamera.transform.position);
         RaycastHit hit;
         if (Physics.Raycast(ray, out hit))
         {
             Vector3 surfaceNormal = hit.normal;
-
-            // Check if the surface is vertical (based on y-component of normal)
             bool isVertical = Mathf.Abs(surfaceNormal.y) < 0.5f;
 
-            // Adjust position based on vertical/horizontal surface
             if (isVertical)
             {
                 return position + surfaceNormal * spawnableObject.verticalOffset;
@@ -139,7 +210,11 @@ public class FromTextureToRealWorld : MonoBehaviour, IPointerClickHandler
             }
         }
 
-        // Return the original position if no hit was found
         return position;
+    }
+
+    public void SetSelectedObject(int index)
+    {
+        selectedObjectID = index;
     }
 }

@@ -6,6 +6,8 @@ public class SpawnableObjectThroughTextureSO : ScriptableObject
     [Tooltip("The prefab to spawn.")]
     public GameObject prefab;
 
+    public string objectName;
+
     public Sprite imageIcon;
 
     [Tooltip("Distance to offset the object from vertical surfaces.")]

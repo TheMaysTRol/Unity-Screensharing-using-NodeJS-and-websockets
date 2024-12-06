@@ -13,6 +13,7 @@ MonoBehaviour:
   m_Name: LongCube
   m_EditorClassIdentifier: 
   prefab: {fileID: 3766203504153087366, guid: 5918f2e1c7ef7734a858a8d47180a619, type: 3}
-  imageIcon: {fileID: 10915, guid: 0000000000000000f000000000000000, type: 0}
+  objectName: Long Cube
+  imageIcon: {fileID: 21300000, guid: fa93256d7f62c984fa15e5a5ee2f3466, type: 3}
   verticalOffset: 0.1
   groundOffset: 0.5

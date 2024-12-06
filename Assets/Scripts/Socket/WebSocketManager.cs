@@ -28,6 +28,7 @@ public class WebSocketManager : MonoBehaviour
     private Dictionary<string, List<Action<JObject>>> resultsSub = new Dictionary<string, List<Action<JObject>>>();
     public bool isSocketConnected = false;
 
+    private static readonly Queue<Action> _executionQueue = new Queue<Action>();
     #endregion
 
     #region Public Fields
@@ -77,6 +78,14 @@ public class WebSocketManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Processes the execution queue during each frame update.
+    /// </summary>
+    private void Update()
+    {
+        ProcessExecutionQueue();
+    }
+
     #endregion
 
     #region WebSocket Initialization
@@ -119,7 +128,13 @@ public class WebSocketManager : MonoBehaviour
     /// <param name="onConnected">Action to invoke when the socket is connected.</param>
     public void Connect(Action onConnected)
     {
-        _socket.OnOpen += (sender, e) => onConnected?.Invoke();
+        _socket.OnOpen += (sender, e) =>
+        {
+            Enqueue(() =>
+            {
+                onConnected?.Invoke();
+            });
+        };
         _socket.ConnectAsync();
     }
 
@@ -141,9 +156,12 @@ public class WebSocketManager : MonoBehaviour
     /// </summary>
     private void OnSocketConnected(object sender, EventArgs e)
     {
-        Debug.Log("Socket connected.");
-        OnSocketConnect?.Invoke();
-        isSocketConnected = true;
+        Enqueue(() =>
+        {
+            Debug.Log("Socket connected.");
+            OnSocketConnect?.Invoke();
+            isSocketConnected = true;
+        });
     }
 
     /// <summary>
@@ -153,9 +171,12 @@ public class WebSocketManager : MonoBehaviour
     /// <param name="e">Contains the reason for disconnection.</param>
     private void OnSocketDisconnected(object sender, CloseEventArgs e)
     {
-        OnSocketDisconnect?.Invoke(e.Reason);
-        isSocketConnected = false;
-        Debug.Log($"Socket disconnected: {e.Reason}");
+        Enqueue(() =>
+        {
+            OnSocketDisconnect?.Invoke(e.Reason);
+            isSocketConnected = false;
+            Debug.Log($"Socket disconnected: {e.Reason}");
+        });
     }
 
     /// <summary>
@@ -165,7 +186,10 @@ public class WebSocketManager : MonoBehaviour
     /// <param name="e">Contains error details.</param>
     private void OnSocketError(object sender, ErrorEventArgs e)
     {
-        Debug.LogError($"Socket error: {e.Message}");
+        Enqueue(() =>
+        {
+            Debug.LogError($"Socket error: {e.Message}");
+        });
     }
 
     /// <summary>
@@ -175,21 +199,37 @@ public class WebSocketManager : MonoBehaviour
     /// <param name="message">The message event containing the data.</param>
     private void OnSocketReceiveMessage(object sender, MessageEventArgs message)
     {
-        try
+        Enqueue(() =>
         {
-            JObject jsonObject = JObject.Parse(message.Data);
-            if (resultsSub.TryGetValue(jsonObject["id"].ToString(), out var callbacks))
+            try
             {
-                foreach (var callback in callbacks)
+                JObject jsonObject = JObject.Parse(message.Data);
+                string key = jsonObject["id"].ToString();
+
+                // Create a copy of the callbacks list to avoid modification during enumeration
+                List<Action<JObject>> callbacksCopy = null;
+
+                lock (resultsSub)
                 {
-                    callback.Invoke(jsonObject);
+                    if (resultsSub.TryGetValue(key, out var callbacks))
+                    {
+                        callbacksCopy = new List<Action<JObject>>(callbacks);
+                    }
+                }
+
+                if (callbacksCopy != null)
+                {
+                    foreach (var callback in callbacksCopy)
+                    {
+                        callback.Invoke(jsonObject);
+                    }
                 }
             }
-        }
-        catch (JsonException ex)
-        {
-            Debug.LogError($"JSON Parsing Error: {ex.Message}");
-        }
+            catch (JsonException ex)
+            {
+                Debug.LogError($"JSON Parsing Error: {ex.Message}");
+            }
+        });
     }
 
     #endregion
@@ -274,5 +314,33 @@ public class WebSocketManager : MonoBehaviour
         });
     }
 
+    #endregion
+
+    #region helpers
+    /// <summary>
+    /// Enqueues an action to be executed on the main thread.
+    /// </summary>
+    /// <param name="action">The action to enqueue.</param>
+    private static void Enqueue(Action action)
+    {
+        lock (_executionQueue)
+        {
+            _executionQueue.Enqueue(action);
+        }
+    }
+
+    /// <summary>
+    /// Processes and executes all queued actions.
+    /// </summary>
+    private void ProcessExecutionQueue()
+    {
+        lock (_executionQueue)
+        {
+            while (_executionQueue.Count > 0)
+            {
+                _executionQueue.Dequeue().Invoke();
+            }
+        }
+    }
     #endregion
 }

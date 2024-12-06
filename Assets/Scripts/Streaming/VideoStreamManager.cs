@@ -1,9 +1,9 @@
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.UI;
 
 /// <summary>
@@ -24,6 +24,7 @@ public class VideoStreamManager : MonoBehaviour
     [SerializeField] private Button LeaveButton;
     [SerializeField] private TMP_InputField fpsInputField;
     [SerializeField] private TMP_InputField qualityInputField;
+    [SerializeField] private GameObject objectSpawnList;
     [SerializeField] private RawImage displayImage;
     [SerializeField] private CanvasGroup totalUi;
     [SerializeField] private TextMeshProUGUI statusMessage;
@@ -41,9 +42,9 @@ public class VideoStreamManager : MonoBehaviour
     private bool isHost = false;
     private RenderTexture renderTexture;
     private Texture2D texture2D;
-    private Texture2D texture;
+    private bool readbackInProgress = false;
 
-    private static readonly Queue<Action> _executionQueue = new Queue<Action>();
+
 
     #endregion
 
@@ -55,17 +56,12 @@ public class VideoStreamManager : MonoBehaviour
     private void Start()
     {
         InitializeWebSocketManager();
+
         SetupUIListeners();
         InitializeFrameRate();
     }
 
-    /// <summary>
-    /// Processes the execution queue during each frame update.
-    /// </summary>
-    private void Update()
-    {
-        ProcessExecutionQueue();
-    }
+
 
     #endregion
 
@@ -87,6 +83,7 @@ public class VideoStreamManager : MonoBehaviour
     private void SetupUIListeners()
     {
         joinButton.onClick.AddListener(OnJoinButtonClicked);
+        DebugMessage("Set up listeners");
         LeaveButton.onClick.AddListener(OnLeaveButtonClicked);
         qualityInputField.onValueChanged.AddListener(OnChangeQuality);
         fpsInputField.onValueChanged.AddListener(OnChangeFPS);
@@ -112,7 +109,7 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="message">The message to display.</param>
     public void SetStatusMessage(string message)
     {
-        Enqueue(() => statusMessage.text = "Status: " + message);
+        statusMessage.text = "Status: " + message;
     }
 
     /// <summary>
@@ -136,7 +133,14 @@ public class VideoStreamManager : MonoBehaviour
         LeaveButton.gameObject.SetActive(!active);
         qualityInputField.gameObject.SetActive(!active);
         fpsInputField.gameObject.SetActive(!active);
+        objectSpawnList.gameObject.SetActive(!active);
         joinInputField.text = "";
+    }
+
+    public void SetActiveHostUI(bool active)
+    {
+        qualityInputField.gameObject.SetActive(active);
+        fpsInputField.gameObject.SetActive(active);
     }
 
     #endregion
@@ -171,9 +175,17 @@ public class VideoStreamManager : MonoBehaviour
     /// </summary>
     private void OnConnectedToSocket()
     {
-        DebugMessage("Connected to WebSocket.");
-        webSocketManager.On("BroadcastFatalError", BroadcastFatalError);
-        SetStatusMessage("Connected to server");
+        try
+        {
+            DebugMessage("Connected to WebSocket.");
+            webSocketManager.On("BroadcastFatalError", BroadcastFatalError);
+            SetStatusMessage("Connected to server");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError(e);
+            Debug.LogError(e.Message);
+        }
     }
 
     /// <summary>
@@ -192,34 +204,31 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="Jobject">The JSON object containing the result of the join request.</param>
     private void OnJoinBroadcastResult(JObject Jobject)
     {
-        Enqueue(() =>
+        try
         {
-            try
+            SetActivateUI(false);
+            SetInteractUI(true);
+            webSocketManager.Off("JoinBroadcastResult", OnJoinBroadcastResult);
+            webSocketManager.On("BroadcastDisconnect", OnBroadcastDisconnect);
+            DebugMessage(Jobject["message"].ToString());
+            isHost = (bool)Jobject["isHost"];
+            SetActiveHostUI(isHost);
+            if (isHost)
             {
-                SetActivateUI(false);
-                SetInteractUI(true);
-                webSocketManager.Off("JoinBroadcastResult", OnJoinBroadcastResult);
-                webSocketManager.On("BroadcastDisconnect", OnBroadcastDisconnect);
-                DebugMessage(Jobject["message"].ToString());
-                isHost = (bool)Jobject["isHost"];
-
-                if (isHost)
-                {
-                    SetStatusMessage("Successfully hosted room " + Jobject["broadcastId"].ToString());
-                    if (!testLocal) displayImage.gameObject.SetActive(false);
-                    StartStream();
-                }
-                else
-                {
-                    SetStatusMessage("Successfully joined room " + Jobject["broadcastId"].ToString());
-                    webSocketManager.On("StreamResult", OnStreamResult);
-                }
+                SetStatusMessage("Successfully hosted room " + Jobject["broadcastId"].ToString());
+                if (!testLocal) displayImage.gameObject.SetActive(false);
+                StartStream();
             }
-            catch (Exception ex)
+            else
             {
-                Debug.LogError($"{ex.Message}\n{ex}");
+                SetStatusMessage("Successfully joined room " + Jobject["broadcastId"].ToString());
+                webSocketManager.On("StreamResult", OnStreamResult);
             }
-        });
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"{ex.Message}\n{ex}");
+        }
     }
 
     /// <summary>
@@ -228,18 +237,15 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="Jobject">The JSON object containing the disconnect message.</param>
     private void OnBroadcastDisconnect(JObject Jobject)
     {
-        Enqueue(() =>
+        try
         {
-            try
-            {
-                DebugMessage(Jobject["message"].ToString());
-                DisconnectAndResetUI(Jobject["message"].ToString());
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"{e.Message}\n{e}");
-            }
-        });
+            DebugMessage(Jobject["message"].ToString());
+            DisconnectAndResetUI(Jobject["message"].ToString());
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"{e.Message}\n{e}");
+        }
     }
 
     /// <summary>
@@ -248,18 +254,15 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="msg">The disconnect message.</param>
     private void OnBroadcastDisconnect(string msg)
     {
-        Enqueue(() =>
+        try
         {
-            try
-            {
-                DebugMessage("You've been disconnected from the broadcast");
-                DisconnectAndResetUI("You've been disconnected from the broadcast");
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"{e.Message}\n{e}");
-            }
-        });
+            DebugMessage("You've been disconnected from the broadcast");
+            DisconnectAndResetUI("You've been disconnected from the broadcast");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"{e.Message}\n{e}");
+        }
     }
 
     /// <summary>
@@ -268,18 +271,15 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="Jobject">The JSON object containing the stream result.</param>
     private void OnStreamResult(JObject Jobject)
     {
-        Enqueue(() =>
+        try
         {
-            try
-            {
-                string images = Jobject["data"]["data"].ToString();
-                ReceiveImages(images);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"{ex.Message}\n{ex}");
-            }
-        });
+            string images = Jobject["data"]["data"].ToString();
+            ReceiveImages(images);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"{ex.Message}\n{ex}");
+        }
     }
 
     #endregion
@@ -307,62 +307,49 @@ public class VideoStreamManager : MonoBehaviour
     /// </summary>
     private IEnumerator StreamVideo()
     {
+        byte[] imageData = null;
+        string b64 = "";
         while (true)
         {
-            yield return new WaitForSeconds(frameTime);
-            CaptureCameraImage();
-            imageData = texture2D.EncodeToJPG(quality);
-            string b64 = Convert.ToBase64String(imageData);
-
-            if (testLocal && isHost) ReceiveImages(b64);
-            if (webSocketManager.isSocketConnected && isHost)
+            yield return new WaitForEndOfFrame();
+            if (!readbackInProgress)
             {
-                webSocketManager.SendSocketMessage("Stream", new { data = b64 });
+                readbackInProgress = true;
+                AsyncGPUReadback.Request(renderTexture, 0, TextureFormat.RGBA32, (request) =>
+                {
+                    if (!request.hasError)
+                    {
+                        var rawData = request.GetData<Color32>();
+                        texture2D.SetPixels32(rawData.ToArray());
+                        texture2D.Apply();
+                        displayImage.texture = texture2D;
+                        imageData = texture2D.EncodeToJPG(quality);
+
+                        //b64 = Convert.ToBase64String(imageData);
+                        if (testLocal && isHost) ReceiveImages(imageData);
+                        if (webSocketManager.isSocketConnected && isHost)
+                        {
+                            webSocketManager.SendSocketMessage("Stream", new { data = imageData });
+                        }
+                        readbackInProgress = false;
+                    }
+                    else
+                    {
+                        readbackInProgress = false;
+                    }
+                });
             }
+            yield return new WaitForSeconds(frameTime);
+
         }
     }
 
-    /// <summary>
-    /// Captures the camera image and stores it in the texture.
-    /// </summary>
-    private void CaptureCameraImage()
-    {
-        RenderTexture.active = renderTexture;
-        streamCamera.Render();
-        texture2D.ReadPixels(new Rect(0, 0, renderTexture.width, renderTexture.height), 0, 0);
-        texture2D.Apply();
-        RenderTexture.active = null;
-    }
 
     #endregion
 
     #region Helper Methods
 
-    /// <summary>
-    /// Enqueues an action to be executed on the main thread.
-    /// </summary>
-    /// <param name="action">The action to enqueue.</param>
-    private static void Enqueue(Action action)
-    {
-        lock (_executionQueue)
-        {
-            _executionQueue.Enqueue(action);
-        }
-    }
 
-    /// <summary>
-    /// Processes and executes all queued actions.
-    /// </summary>
-    private void ProcessExecutionQueue()
-    {
-        lock (_executionQueue)
-        {
-            while (_executionQueue.Count > 0)
-            {
-                _executionQueue.Dequeue().Invoke();
-            }
-        }
-    }
 
     /// <summary>
     /// Logs debug messages if debug mode is enabled.
@@ -422,9 +409,36 @@ public class VideoStreamManager : MonoBehaviour
     /// </summary>
     private void InitializeRenderTexture()
     {
-        renderTexture = new RenderTexture(Screen.width, Screen.height, 24);
-        texture2D = new Texture2D(Screen.width, Screen.height, TextureFormat.RGB24, false);
+        renderTexture = new RenderTexture(960, 540, 24);
+        texture2D = new Texture2D(960, 540, TextureFormat.RGB24, false);
         streamCamera.targetTexture = renderTexture;
+    }
+
+    public bool IsConnected()
+    {
+        if (webSocketManager.isSocketConnected)
+        {
+            return true;
+        }
+        return false;
+    }
+
+    public bool isHosting()
+    {
+        if (IsConnected() && isHost)
+        {
+            return true;
+        }
+        return false;
+    }
+
+    public bool IsJoined()
+    {
+        if (IsConnected() && !isHost)
+        {
+            return true;
+        }
+        return false;
     }
 
     #endregion
@@ -437,13 +451,17 @@ public class VideoStreamManager : MonoBehaviour
     /// <param name="imageData">The image data in byte array format.</param>
     public void ReceiveImages(byte[] imageData)
     {
-        if (texture == null)
+        if (!texture2D)
         {
-            texture = new Texture2D(2, 2);
+            texture2D = new Texture2D(640, 360, TextureFormat.RGB24, false);
         }
-        texture.LoadImage(imageData);
-        displayImage.texture = texture;
+        texture2D.LoadImage(imageData);
+        if (displayImage)
+        {
+            displayImage.texture = texture2D;
+        }
     }
+
 
     /// <summary>
     /// Processes and displays received image data in base64 string format.
@@ -493,4 +511,6 @@ public class VideoStreamManager : MonoBehaviour
     }
 
     #endregion
+
+
 }

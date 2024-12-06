@@ -74,7 +74,7 @@ function handleStartBroadcast(ws, broadcastId) {
     console.log(`Joining broadcast: ${broadcastId}`);
   } else {
     console.log(`Hosting broadcast: ${broadcastId}`);
-    broadcasts.set(broadcastId, new Broadcast(broadcastId, ws.clientId));
+    broadcasts.set(broadcastId, new Broadcast(broadcastId, ws));
     isHost = true;
   }
 
@@ -105,6 +105,18 @@ function stream(ws, data) {
   }
 }
 
+/**
+ * Sends to the host a request to spawn object at a specific position
+ * @param {WebSocket} ws - WebSocket connection of the sender
+ * @param {Object} data - Data to be streamed
+ */
+function InstantiateObject(ws, data) {
+  if (ws.connectedBroadcast && broadcasts.has(ws.connectedBroadcast)) {
+	  console.log(data);
+        sendLocal(broadcasts.get(ws.connectedBroadcast).owner, { id: 'Instantiate', data });
+  }
+}
+
 // WebSocket server event handlers
 wss.on('connection', (ws) => {
   const clientId = uuidv4();
@@ -123,6 +135,9 @@ wss.on('connection', (ws) => {
           stream(ws, data);
           break;
         default:
+		case 'Instantiate':
+          InstantiateObject(ws, data);
+          break;
           console.log('Unknown message type:', data.id);
       }
     } catch (error) {
